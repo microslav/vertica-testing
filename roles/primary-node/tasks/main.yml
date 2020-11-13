@@ -9,7 +9,7 @@
 ---
 ### Run Vertica performance validation tests
 - name: Run Vertica performance validation tests
-  block: 
+  block:
     - name: Create or check local destination directory
       file:
         path: "{{ vperf_dir }}/"
@@ -18,7 +18,7 @@
       delegate_to: localhost
       run_once: yes
     - name: Gather CPU performance data
-      shell: 
+      shell:
         cmd: "/opt/vertica/bin/vcpuperf | tee /tmp/vcpuperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out 2>&1"
       become: yes
       become_user: "{{ dbuser }}"
@@ -29,8 +29,11 @@
         dest: "{{ vperf_dir }}/"
         flat: yes
     - name: Gather network IO performance
-      shell: 
-        cmd: "/opt/vertica/bin/vnetperf --duration=5 --hosts={{ vnodes_ips }} --identity-file={{ keypath }} --vertica-install={{ vbin_path }} > /tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out 2>&1"
+      shell:
+        cmd: >-
+          /opt/vertica/bin/vnetperf --duration=5 --hosts={{ vnodes_ips }} --identity-file={{ keypath }}
+          --vertica-install={{ vbin_path }} > /tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out
+          2>&\1
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
@@ -42,8 +45,10 @@
         flat: yes
       run_once: yes
     - name: Gather root drive IO performance
-      shell: 
-        cmd: "/opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16 {{ vperf_io_locpath }} >/tmp/vioperf_{{ hosts_group }}_LOC_{{ inventory_hostname_short }}.out 2>&1"
+      shell:
+        cmd: >-
+          /opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16
+          {{ vperf_io_locpath }} >/tmp/vioperf_{{ hosts_group }}_LOC_{{ inventory_hostname_short }}.out 2>&\1
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
@@ -53,8 +58,10 @@
         dest: "{{ vperf_dir }}/"
         flat: yes
     - name: Gather FlashBlade NFS IO performance
-      shell: 
-        cmd: "/opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16 {{ vperf_io_nfspath }} >/tmp/vioperf_{{ hosts_group }}_NFS_{{ inventory_hostname_short }}.out 2>&1"
+      shell:
+        cmd: >-
+          /opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16
+          {{ vperf_io_nfspath }} >/tmp/vioperf_{{ hosts_group }}_NFS_{{ inventory_hostname_short }}.out 2>&\1
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
@@ -68,7 +75,7 @@
 ### Create and tune a new empty database
 - name: Run the Vertica create_db script
   shell:
-    cmd: "{{ vdb_create_db_cmd }}"          
+    cmd: "{{ vdb_create_db_cmd }}"
   become: yes
   become_user: "{{ dbuser }}"
   become_method: su
@@ -78,7 +85,7 @@
 
 - name: Run FlashBlade-specific tuning for the database
   shell:
-    cmd: "{{ vdb_tune_db_cmd }}"          
+    cmd: "{{ vdb_tune_db_cmd }}"
   become: yes
   become_user: "{{ dbuser }}"
   become_method: su
@@ -108,7 +115,7 @@
       become_method: su
       register: out
     - debug: var=out
-    - name: Run the VMart data generator script 
+    - name: Run the VMart data generator script
       shell:
         cmd: "{{ vmart_gen_cmd }}"
         chdir: "{{ vmart_code_dir }}"
@@ -129,7 +136,7 @@
     - debug: var=out
     - name: Load the generated data into the database
       shell:
-        cmd: "vsql -ef {{ vmart_pload_sql}}"
+        cmd: "vsql -ef {{ vmart_pload_sql }}"
         chdir: "{{ vmart_dest_dir }}"
       become: yes
       become_user: "{{ dbuser }}"

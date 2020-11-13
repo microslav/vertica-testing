@@ -86,7 +86,7 @@
 - name: Install the package on the host
   package:
     name: "/tmp/{{ rft_pkg }}"
-    state: latest
+    state: present
   register: out
   ignore_errors: no
 - debug:
@@ -148,7 +148,7 @@
     dest: "/etc/profile.d/custom-path.sh"
     block: 'PATH=$PATH:/opt/vertica/sbin:/opt/vertica/bin'
     marker: '# {mark} ANSIBLE MANAGED BLOCK add Vertica binaries'
-    mode: "0644"    
+    mode: '0644'
 
 ### Configure tuned for lowering latency and improving response times
 - name: Create tuned configuration directory
@@ -194,7 +194,7 @@
   delegate_to: localhost
 
 - name: Create the configuration file for the installation
-  blockinfile: 
+  blockinfile:
     path: "{{ loc_cfg_path }}"
     block: |
       accept_eula = True
@@ -217,8 +217,8 @@
     dest: "{{ item.dest }}"
     mode: "0600"
   with_items:
-    - { src: "{{ loc_cfg_path }}", dest: "{{ nod_cfg_path }}" } 
-    - { src: "{{ loc_lic_path }}", dest: "{{ nod_lic_path }}" } 
+    - { src: "{{ loc_cfg_path }}", dest: "{{ nod_cfg_path }}" }
+    - { src: "{{ loc_lic_path }}", dest: "{{ nod_lic_path }}" }
   run_once: yes
   register: out
 - debug: var=out

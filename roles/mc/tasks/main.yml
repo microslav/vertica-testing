@@ -29,7 +29,7 @@
 - name: Install the Vertica Management Console package
   package:
     name: "/tmp/{{ console_pkg }}"
-    state: latest
+    state: present
   become: yes
   register: out
 - debug: var=out.results
@@ -57,7 +57,7 @@
   shell: pgrep --full 'vconsole.home'
   ignore_errors: yes
   register: pid
-- debug: 
+- debug:
     msg: "{{ pid }}"
 - name: Kill the Java process if it existed
   shell:

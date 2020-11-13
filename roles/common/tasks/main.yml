@@ -13,9 +13,9 @@
 - name: "Get Extras Repository"
   package:
     name: "{{ extras_uri }}"
-    state: latest
+    state: present
 
-- name: "Install latest deltarpm to speed up updates"
+- name: "Install deltarpm to speed up updates"
   package:
     name: deltarpm
     state: present
@@ -29,19 +29,19 @@
 - name: "Install System Packages"
   package:
     name: "{{ sys_packages }}"
-    state: latest
+    state: present
     skip_broken: yes
 
 - name: "Install Performance Packages"
   package:
     name: "{{ perf_packages }}"
-    state: latest
+    state: present
     skip_broken: yes
 
 - name: "Install Comfort Packages"
   package:
     name: "{{ comfy_packages }}"
-    state: latest
+    state: present
     skip_broken: yes
 
 ### Make sure we're operation in the right timezone
@@ -57,11 +57,13 @@
     line: "{{ hostvars[item]['ansible_env'].SSH_CONNECTION.split(' ')[2] }}\t{{ hostvars[item]['ansible_hostname'] }}"
     state: present
     backup: yes
-  when: ansible_hostname != "{{ item }}" or ansible_hostname == "{{ item }}"
+  when: (ansible_hostname != item) or (ansible_hostname == item)
   with_items: "{{ groups[hosts_group] }}"
 
 - name: Get the FlashBlade Data IP address
-  local_action: shell getent hosts "{{ fb_data }}"
+  shell: 
+    cmd: getent hosts "{{ fb_data }}"
+  delegate_to: localhost
   register: out
 - debug:
     var: out.stdout_lines[0]
@@ -72,11 +74,13 @@
     line: "{{ out.stdout_lines[0] }}"
     state: present
     backup: yes
-  when: out.stdout != ''
+  when: out.stdout|length > 0
 
 - name: Get the FlashBlade Management IP address
-  local_action: shell getent hosts "{{ fb_mgmt }}"
+  shell: 
+    cmd: getent hosts "{{ fb_mgmt }}"
   register: out
+  delegate_to: localhost
 - debug:
     var: out.stdout_lines[0]
 - name: Update the /etc/hosts file with the FlashBlade Management VIP
@@ -86,7 +90,7 @@
     line: "{{ out.stdout_lines[0] }}"
     state: present
     backup: yes
-  when: out.stdout != ''
+  when: out.stdout|length > 0
 
 ### Configure root and the Vertica admin user
 - name: "Create {{ dbgroup }} group for the new user if it doesn't exist"
@@ -193,7 +197,7 @@
     src: "{{ go_url }}/go{{ go_ver }}.{{ go_os }}-{{ go_arch }}.tar.gz"
     dest: /usr/local
     remote_src: yes
-  when: go_bin.stat.exists == False
+  when: not go_bin.stat.exists
 
 - name: Check if Go already in /etc/profile.d/custom-path.sh
   shell:
@@ -269,7 +273,7 @@
 - name: Testing S3 Access -- copy test file to bucket
   shell:
     cmd: >-
-      s5cmd --endpoint-url {{ fb_data }} 
+      s5cmd --endpoint-url {{ fb_data }}
       cp /tmp/s5cmd_testfile s3://{{ fb_s3_bucket }}/{{ inventory_hostname_short }}/s5cmd_testfile
   register: s5cmd_result
 - debug:
@@ -277,8 +281,8 @@
 
 - name: Testing S3 Access -- list test files
   shell:
-    cmd: >- 
-      s5cmd --endpoint-url {{ fb_data }} 
+    cmd: >-
+      s5cmd --endpoint-url {{ fb_data }}
       ls -H s3://{{ fb_s3_bucket }}/{{ inventory_hostname_short }}/*
   register: s5cmd_result
 - debug:
@@ -287,7 +291,7 @@
 - name: Testing S3 Access -- remove remote test file
   shell:
     cmd: >-
-      s5cmd --endpoint-url {{ fb_data }} 
+      s5cmd --endpoint-url {{ fb_data }}
       rm s3://{{ fb_s3_bucket }}/{{ inventory_hostname_short }}/s5cmd_testfile
   register: s5cmd_result
 - debug:
@@ -295,8 +299,8 @@
 
 - name: Testing S3 Access -- list empty bucket (error message)
   shell:
-    cmd: >- 
-      s5cmd --endpoint-url {{ fb_data }} 
+    cmd: >-
+      s5cmd --endpoint-url {{ fb_data }}
       ls s3://{{ fb_s3_bucket }}/{{ inventory_hostname_short }}/
   register: s5cmd_result
   ignore_errors: yes
