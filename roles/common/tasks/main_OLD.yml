@@ -1,0 +1,145 @@
+---
+# This playbook runs common plays across all groups and hosts in the Vertica PoC
+
+- name: "Get EPEL Repository"
+  package:
+    name: epel-release
+    state: latest
+
+- name: "Install latest deltarpm to speed up updates"
+  package:
+    name: deltarpm
+    state: present
+
+- name: "Update all packages to latest"
+  package:
+    name: "*"
+    state: latest
+
+- name: "Install System Packages"
+  package:
+    name: "{{ system_packages }}"
+    state: latest
+
+- name: "Install Performance Packages"
+  package:
+    name: "{{ perf_packages }}"
+    state: latest
+
+- name: "Install Interactive Comfort Packages"
+  package:
+    name: "{{ comfy_packages }}"
+    state: latest
+
+- name: Swap network management from NetworkManager to file-based network.service
+  service:
+    name: "{{ item.name }}"
+    enabled: "{{ item.enabled }}"
+    state: "{{ item.state }}"
+  with_items:
+    - { name: "NetworkManager", enabled: no , state: stopped }
+    - { name: "network.service", enabled: yes , state: started }
+
+- name: Copy networking files to hosts
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "0600"
+  with_items:
+    - { src: "{{ poc_resolv_conf }}", dest: "/etc/resolv.conf" }
+    - { src: "{{ poc_network }}", dest: "/etc/sysconfig/network" }
+
+- name: Set timezone to {{ tz }}
+  timezone:
+    name: "{{ tz }}"
+
+- name: "Create {{ dbgroup }} group for the new user if it doesn't exist"
+  group:
+    name: "{{ dbgroup }}"
+    state: present
+  become: yes
+
+- name: "Create {{ dbuser }} user for {{ dbreal }}"
+  user:
+    name: "{{ dbuser }}"
+    comment: "{{ dbreal }}"
+    password: "{{ pwhash }}"
+    generate_ssh_key: yes
+    group: "{{ dbgroup }}"
+  become: yes
+
+- name: "Add {{ dbuser }} to nopasswd sudoers"
+  shell:
+    cmd: echo "{{ dbuser }} ALL = (root) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/{{ dbuser }}"
+  become: yes
+
+- name: "Change permissions on sudoers file so SSH is happy"
+  file:
+    path: "/etc/sudoers.d/{{ dbuser }}"
+    mode: '0440'
+  become: yes
+
+- name: Generate contents of .ssh directories
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+    owner: "{{ item.user }}"
+    group: "{{ item.group }}"
+  with_items: 
+    - { user: "root", group: "root", src: "{{ keypath }}", dest: "/root/.ssh/", mode: '0600' }
+    - { user: "root", group: "root", src: "{{ keypubpath }}", dest: "/root/.ssh/", mode: '0644' }
+    - { user: "root", group: "root", src: "{{ keypubpath }}", dest: "/root/.ssh/authorized_keys", mode: '0644' }
+    - { user: "{{ dbuser }}", group: "{{ dbgroup }}", src: "{{ keypath }}", dest: "/home/dbadmin/.ssh/", mode: '0600' }
+    - { user: "{{ dbuser }}", group: "{{ dbgroup }}", src: "{{ keypubpath }}", dest: "/home/dbadmin/.ssh/", mode: '0644' }
+    - { user: "{{ dbuser }}", group: "{{ dbgroup }}", src: "{{ keypubpath }}", dest: "/home/dbadmin/.ssh/authorized_keys", mode: '0644' }
+  become: yes
+
+- name: Generate .ssh/config file
+  copy:
+    content: |
+      Host *
+        User {{ item.user }}
+        IdentityFile {{ item.home }}/.ssh/{{ keyname }}
+        StrictHostKeyChecking no
+    dest: "{{ item.home }}/.ssh/config"
+    mode: '0600'
+    owner: "{{ item.user }}"
+    group: "{{ item.group }}"
+  with_items: 
+    - { user: "root", group: "root", home: "/root" }
+    - { user: "{{ dbuser }}", group: "{{ dbgroup }}", home: "/home/dbadmin" }
+  become: yes
+
+- name: Create the .aws directory
+  file:
+    path: "{{ item.home }}/.aws"
+    state: directory
+    owner: "{{ item.user }}"
+    group: "{{ item.group }}"
+  with_items: 
+    - { user: "root", group: "root", home: "/root" }
+    - { user: "{{ dbuser }}", group: "{{ dbgroup }}", home: "/home/dbadmin" }
+  become: yes
+
+- name: Copy FlashBlade S3 credentials to ~/.aws directory
+  copy:
+    src: "{{ aws_cred_file }}"
+    dest: "{{ item.home }}/.aws/credentials"
+    mode: '0600'
+    owner: "{{ item.user }}"
+    group: "{{ item.group }}"
+  with_items: 
+    - { user: "root", group: "root", home: "/root" }
+    - { user: "{{ dbuser }}", group: "{{ dbgroup }}", home: "/home/dbadmin" }
+  become: yes
+
+- name: Copy FlashBlade S3 credentials to ~/auth_params.conf for {{ dbuser }}
+  copy:
+    src: "{{ vertica_auth_file }}"
+    dest: "/home/{{ dbuser }}/"
+    mode: '0600'
+    owner: "{{ dbuser }}"
+    group: "{{ dbgroup }}"
+  become: yes
+

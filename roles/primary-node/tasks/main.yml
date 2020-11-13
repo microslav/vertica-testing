@@ -1,0 +1,151 @@
+######################################################################
+#
+# Special steps on a primary cluster node
+#
+# Assumptions:
+#   1. Ansible user is root, and "become" needed for other users. 
+#
+######################################################################
+---
+### Run Vertica performance validation tests
+- name: Run Vertica performance validation tests
+  block: 
+    - name: Create or check local destination directory
+      file:
+        path: "{{ vperf_dir }}/"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: yes
+    - name: Gather CPU performance data
+      shell: 
+        cmd: "/opt/vertica/bin/vcpuperf | tee /tmp/vcpuperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out 2>&1"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+    - name: Fetch CPU performance results into local directory
+      fetch:
+        src: "/tmp/vcpuperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+    - name: Gather network IO performance
+      shell: 
+        cmd: "/opt/vertica/bin/vnetperf --duration=5 --hosts={{ vnodes_ips }} --identity-file={{ keypath }} --vertica-install={{ vbin_path }} > /tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out 2>&1"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      run_once: yes
+    - name: Fetch Network performance results into local directory
+      fetch:
+        src: "/tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+      run_once: yes
+    - name: Gather root drive IO performance
+      shell: 
+        cmd: "/opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16 {{ vperf_io_locpath }} >/tmp/vioperf_{{ hosts_group }}_LOC_{{ inventory_hostname_short }}.out 2>&1"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+    - name: Fetch performance results into local directory
+      fetch:
+        src: "/tmp/vioperf_{{ hosts_group }}_LOC_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+    - name: Gather FlashBlade NFS IO performance
+      shell: 
+        cmd: "/opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16 {{ vperf_io_nfspath }} >/tmp/vioperf_{{ hosts_group }}_NFS_{{ inventory_hostname_short }}.out 2>&1"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+    - name: Fetch performance results into local directory
+      fetch:
+        src: "/tmp/vioperf_{{ hosts_group }}_NFS_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+  when: vperf_runsteps
+
+### Create and tune a new empty database
+- name: Run the Vertica create_db script
+  shell:
+    cmd: "{{ vdb_create_db_cmd }}"          
+  become: yes
+  become_user: "{{ dbuser }}"
+  become_method: su
+  run_once: yes
+  register: out
+- debug: var=out
+
+- name: Run FlashBlade-specific tuning for the database
+  shell:
+    cmd: "{{ vdb_tune_db_cmd }}"          
+  become: yes
+  become_user: "{{ dbuser }}"
+  become_method: su
+  run_once: yes
+  register: out
+- debug: var=out
+
+### Set up and run the VMart demo on the Vertica Nodes
+- name: Set up and run the VMart demo on the Vertica Nodes
+  block:
+    - name: Define the VMart database schema in the database
+      shell:
+        cmd: "vsql -ef vmart_define_schema.sql"
+        chdir: "{{ vmart_code_dir }}"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      run_once: true
+      register: out
+    - debug: var=out
+    - name: Make sure output data destination directories exist
+      file:
+        path: "{{ vmart_dest_dir }}"
+        state: directory
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      register: out
+    - debug: var=out
+    - name: Run the VMart data generator script 
+      shell:
+        cmd: "{{ vmart_gen_cmd }}"
+        chdir: "{{ vmart_code_dir }}"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      run_once: true
+      register: out
+    - debug: var=out
+    - name: Copy the parallel load SQL code to the Vertica nodes
+      copy:
+        src: "{{ vmart_pload_sql }}"
+        dest: "{{ vmart_dest_dir }}"
+        owner: "{{ dbuser }}"
+        group: "{{ dbgroup }}"
+        mode: '0755'
+      register: out
+    - debug: var=out
+    - name: Load the generated data into the database
+      shell:
+        cmd: "vsql -ef {{ vmart_pload_sql}}"
+        chdir: "{{ vmart_dest_dir }}"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      run_once: true
+      register: out
+    - debug: var=out
+    - name: Query the database with some example queries all nodes
+      shell:
+        cmd: "vsql -if vmart_queries.sql | grep 'Time:'"
+        chdir: "{{ vmart_code_dir }}"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      register: out
+    - debug: var=out
+  when: vmart_runsteps
+
+...

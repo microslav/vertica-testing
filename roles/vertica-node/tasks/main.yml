@@ -1,0 +1,239 @@
+######################################################################
+#
+# Common configuration steps for Vertica database nodes
+#
+# Assumptions:
+#   1. Ansible user is root, and "become" needed for other users. 
+#
+######################################################################
+---
+### Prepare the nodes for Vertica install
+- name: Make sure we always use /bin/bash
+  shell:
+    cmd: |
+      [[ -x /bin/sh.ORIG ]] || ( mv /bin/sh /bin/sh.ORIG && ln -s /bin/bash /bin/sh )
+      ls -hal /bin/sh /bin/sh.ORIG
+  register: out
+- debug:
+    msg: "{{ out.stdout_lines }}"
+
+- name: Set Block IO scheduler noop (for SSD); assumes /dev/{{ block_dev }} device
+  shell:
+    cmd: |
+      echo noop > /sys/block/{{ block_dev }}/queue/scheduler
+      [[ $(grep -q "scheduler" /etc/rc.local) ]] || ( echo "echo noop > /sys/block/{{ block_dev }}/queue/scheduler" >> /etc/rc.local )
+      cat /sys/block/{{ block_dev }}/queue/scheduler
+      grep scheduler /etc/rc.local
+  register: out
+- debug:
+    msg: "{{ out.stdout_lines }}"
+
+- name: Set the block device read-ahead settings to 8192
+  shell:
+    cmd: |
+      /sbin/blockdev --setra 8192 /dev/{{ block_dev }}
+      [[ $(grep -q "setra 8192 /dev/{{ block_dev }}" /etc/rc.local) ]] || ( echo "/sbin/blockdev --setra 8192 /dev/{{ block_dev }}" >> /etc/rc.local )
+      /sbin/blockdev --getra /dev/{{ block_dev }}
+      grep setra /etc/rc.local
+  register: out
+  ignore_errors: yes
+- debug:
+    msg: "{{ out.stdout_lines }}"
+
+- name: Set Timezone and Language in /etc/profile
+  shell:
+    cmd: |
+      [[ $(grep -q "{{ host_tz }}" /etc/profile) ]] || ( echo export TZ="{{ host_tz }}" | tee -a /etc/profile )
+      [[ $(grep -q "{{ host_lang }}" /etc/profile) ]] || ( echo export LANG="{{ host_lang }}" | tee -a /etc/profile )
+      grep -iE "LANG|TZ" /etc/profile
+  register: out
+  ignore_errors: no
+- debug:
+    msg: "{{ out.stdout_lines }}"
+
+- name: Tune cluster with correct vm.swappiness and to handle more TCP connections
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+  with_items:
+    - { name: "vm.swappiness", value: "1" }
+    - { name: "net.ipv4.tcp_fin_timeout", value: "20" }
+    - { name: "net.ipv4.tcp_tw_reuse", value: "1" }
+    - { name: "net.ipv4.ip_local_port_range", value: "16384 65535" }
+  register: out
+  ignore_errors: no
+- debug: var=out
+
+- name: Allow SSH TCP Forwarding for VBR Backups to work
+  shell:
+    cmd: "sed -i -e '/^#AllowTcpForwarding yes/s/^#//' -e 's/^#MaxStartups .*$/MaxStartups 1088:30:2048/g' /etc/ssh/sshd_config \
+             && systemctl restart sshd.service \
+             && (sshd -T | grep -iE 'MaxStartups|AllowTCPForwarding')"
+  register: out
+- debug: var=out
+
+# Install the Pure Storage RapidFile Toolkit on the nodes for any ETL data wrangling
+# Ensure that the RapidFile Toolkit RPM is copied into the files directory for the role
+- name: Copy RFT package to hosts
+  copy:
+    src: "{{ rft_pkg }}"
+    dest: "/tmp/"
+    mode: "0644"
+  register: out
+  ignore_errors: no
+- debug: var=out
+- name: Install the package on the host
+  package:
+    name: "/tmp/{{ rft_pkg }}"
+    state: latest
+  register: out
+  ignore_errors: no
+- debug:
+    msg: "{{ out.results }}"
+- name: Gather package facts
+  package_facts:
+- name: Verify that the package is installed
+  debug:
+    msg: "{{ ansible_facts.packages['rapidfile'] | length }} version(s) of RapidFile Toolkit installed"
+  when: "'rapidfile' in ansible_facts.packages"
+
+- name: Disable SE Linux
+  shell:
+    cmd: |
+      setenforce 0
+      getenforce
+      sed -i "s/SELINUX=enforcing/SELINUX=disabled/g" /etc/selinux/config
+      grep SELINUX= /etc/selinux/config | grep -v '^\#'
+  register: out
+  ignore_errors: no
+- debug:
+    msg: "{{ out.stdout_lines }}"
+
+- name: Get perl version
+  shell:
+    cmd: perl -e 'print substr($^V, 1)'
+  register: out
+  failed_when: out.stdout_lines[0] is version('5.0.0','<')
+- debug:
+    msg: "Perl version is {{ out.stdout_lines }}"
+
+- name: Check socket states for required ports not being used
+  shell:
+    cmd: ss -atupn | grep -E ':5433|:5434|:5444|:5450|:4803|:4804|:6543'
+  register: out
+  ignore_errors: yes
+  failed_when: out.rc != 1
+- debug:
+    msg: "{{ out.stderr_lines }}"
+
+- name: Check that Huge Pages set to Always
+  shell:
+    cmd: cat /sys/kernel/mm/transparent_hugepage/enabled
+  register: out
+  failed_when: "'[always]' not in out.stdout_lines"
+- debug:
+    msg: "{{ out.stdout_lines }}"
+
+- name: Gather package facts
+  package_facts:
+- name: Verify that the Vertica package is installed
+  debug:
+    msg: "{{ ansible_facts.packages['vertica'] | length }} version(s) of Vertica installed"
+  when: "'vertica' in ansible_facts.packages"
+  failed_when: "'vertica' not in ansible_facts.packages"
+
+- name: Create Vertica custom paths file for users to find Vertica binaries in their path
+  blockinfile:
+    dest: "/etc/profile.d/custom-path.sh"
+    block: 'PATH=$PATH:/opt/vertica/sbin:/opt/vertica/bin'
+    marker: '# {mark} ANSIBLE MANAGED BLOCK add Vertica binaries'
+    mode: "0644"    
+
+### Configure tuned for lowering latency and improving response times
+- name: Create tuned configuration directory
+  file:
+    path: "{{ tuned_config_dir }}"
+    state: directory
+    mode: "755"
+
+- name: Copy tuned configuration for Vertica to the hosts
+  copy:
+    src: "{{ tuned_file }}"
+    dest: "{{ tuned_config_dir }}"
+    mode: "644"
+
+- name: Enable and start tuned service
+  systemd:
+    name: tuned
+    state: started
+    enabled: yes
+- name: Gather service facts
+  service_facts:
+- name: Check tuned status
+  debug:
+    msg: "{{ ansible_facts.services['tuned.service'] }}"
+
+- name: Configure and verify tuned is working
+  shell:
+    cmd: |
+      tuned-adm profile vertica-performance
+      sleep 15
+      tuned-adm verify
+      grep -i mhz /proc/cpuinfo
+  register: out
+- debug:
+    msg: "{{ out.stdout_lines }}"
+### Revert to defaults by running "tuned-adm recommend" on hosts
+
+### Configure the hosts to be Vertica nodes
+- name: Delete any old temporary config files
+  file:
+    path: "{{ loc_cfg_path }}"
+    state: absent
+  delegate_to: localhost
+
+- name: Create the configuration file for the installation
+  blockinfile: 
+    path: "{{ loc_cfg_path }}"
+    block: |
+      accept_eula = True
+      license_file = {{ nod_lic_path }}
+      direct_only = {{ nod_vms }}
+      failure_threshold = FAIL
+      hosts = {{ nod_names }}
+      ipv4 = False
+      ipv6 = False
+      record_to = /root/recorded_vertica_install.cfg
+      ssh_identity = /root/.ssh/{{ keypath }}
+      vertica_dba_user = {{ dbuser }}
+      vertica_dba_group = {{ dbgroup }}
+    create: yes
+  delegate_to: localhost
+
+- name: Copy the Vertica files to install host
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "0600"
+  with_items:
+    - { src: "{{ loc_cfg_path }}", dest: "{{ nod_cfg_path }}" } 
+    - { src: "{{ loc_lic_path }}", dest: "{{ nod_lic_path }}" } 
+  run_once: yes
+  register: out
+- debug: var=out
+
+- name: Run the Vertica Install Script on the install host
+  shell:
+    cmd: "/opt/vertica/sbin/install_vertica --config-file {{ nod_cfg_path }}"
+  run_once: yes
+  register: out
+- debug: var=out
+
+- name: Clean up the temporary license file on the install host
+  file:
+    path: "{{ nod_lic_path }}"
+    state: absent
+  run_once: yes
+
+...
