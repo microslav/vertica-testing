@@ -61,7 +61,7 @@
   with_items: "{{ groups[hosts_group] }}"
 
 - name: Get the FlashBlade Data IP address
-  shell: 
+  shell:
     cmd: getent hosts "{{ fb_data }}"
   delegate_to: localhost
   register: out
@@ -77,7 +77,7 @@
   when: out.stdout|length > 0
 
 - name: Get the FlashBlade Management IP address
-  shell: 
+  shell:
     cmd: getent hosts "{{ fb_mgmt }}"
   register: out
   delegate_to: localhost
@@ -286,7 +286,7 @@
       ls -H s3://{{ fb_s3_bucket }}/{{ inventory_hostname_short }}/*
   register: s5cmd_result
 - debug:
-    msg: "{{ s5cmd_result.stdout_lines }}"    
+    msg: "{{ s5cmd_result.stdout_lines }}"
 
 - name: Testing S3 Access -- remove remote test file
   shell:

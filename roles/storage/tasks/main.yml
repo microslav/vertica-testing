@@ -20,7 +20,7 @@
 - name: Upgrade pip (via pip) to latest
   pip:
     name: pip
-    state: latest       
+    state: latest
 
 - name: Install or upgrade required purity-fb Python module
   pip:
