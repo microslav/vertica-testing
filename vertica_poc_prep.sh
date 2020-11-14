@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
+if [[ "$(basename -- "$0")" == "vertica_poc_prep.sh" ]]; then
+    echo "Don't run $0, source it" >&2
+    exit 1
+fi
 
 set -x 
 
@@ -18,12 +21,11 @@ set -x
 
 ### PoC General Settings
 export POC_ANSIBLE_GROUP="vertica"              # Ansible Vertica nodes host group
-export POC_PREFIX="solnlab"                     # Short name for this POC
-export KEYNAME="miroslav-pstg-outpost-keys"     # Name of SSH key (without suffix)
+export POC_PREFIX="fsa"                         # Short name for this POC
+export KEYNAME="fsa-vertica-keys"               # Name of SSH key (without suffix)
 export LAB_DOM="vertica.lab"                    # Internal domain created for PoC
-export POC_DOM="solutionslab.purestorage.com"   # External domain where PoC runs
-export POC_DNS="10.21.93.16"                    # External DNS IP where PoC runs
-export DB_USER="dbadmin"                        # Name of Vertica non-root user
+export POC_DOM="fsa.lab"                        # External domain where PoC runs
+export POC_DNS="10.21.234.10"                   # External DNS IP where PoC runs
 export POC_TZ="America/Los_Angeles"             # Timezone where PoC runs
 
 ### PoC Platform Devices and Roles
@@ -31,7 +33,7 @@ export POC_TZ="America/Los_Angeles"             # Timezone where PoC runs
 # repeat the name of the device in multiple places:
 export PRIV_NDEV="ens192"      # Private (primary) network interface
 export PUBL_NDEV="ens224"      # Public network interface for access and NAT
-export DATA_NDEV="ens256"      # Data network interface for storage access
+export DATA_NDEV="ens224"      # Data network interface for storage access
 # Block device used for local storage on the Vertica nodes (e.g., nvme0n1, mapper, sda1)
 # The default for CentOS is "mapper" since dbadmin will live on /dev/mapper/centos-home
 export BLOCK_DEV="mapper"
@@ -59,8 +61,8 @@ read -r -d '' SECONDARY_HOST_ENTRIES <<-_EOF_
 192.168.1.8 ${POC_PREFIX}-06 vertica-node006
 _EOF_
 read -r -d '' STORAGE_ENTRIES <<-_EOF_
-10.23.100.11 ${POC_PREFIX}-fb-mgmt poc-fb-mgmt
-10.0.102.11  ${POC_PREFIX}-fb-data poc-fb-data
+10.21.200.5 ${POC_PREFIX}-fb-mgmt poc-fb-mgmt
+10.21.200.4 ${POC_PREFIX}-fb-data poc-fb-data
 _EOF_
 
 ### Configure whether to run the Vertica performance baselines and VMart demo
@@ -124,6 +126,9 @@ export LAB_RDNS_DATA="$(echo $LAB_DATA_NET | awk -F. '{print $3 "." $2 "." $1}')
 export LAB_DNS_IP="${PRIV_IP}"
 export LAB_GW="${LAB_PRIV_NET}.${LAB_IP_SUFFIX}"
 
+# Name of Vertica non-root user (Should not be changed, but parameterized for testing)
+export DBUSER="dbadmin"                         
+
 ### Install some basic packages
 yum install -y epel-release
 yum install -y dnf deltarpm
@@ -134,12 +139,14 @@ export PUBPATH="${HOME}/.ssh/${KEYNAME}.pub"
 if [ ${IS_AWS_UUID^^} == "EC2" ]; then
     # If AWS, then check that the key(s) have been uploaded and given expected name(s)
     export KEYPATH="${HOME}/.ssh/${KEYNAME}.pem"
-    [[ -f "${KEYPATH}" ]] || { echo "!!! ERROR: Please upload the private SSH key to ${KEYPATH} !!!"; exit 1 }
-    [[ -f "${PUBPATH}" ]] || ssh-keygen -y -f ${KEYPATH} > ${PUBPATH} 
+    [[ -f "${KEYPATH}" ]] || { echo "!!! ERROR: Please upload the private SSH key to ${KEYPATH} !!!"; exit 1; }
+    [[ -f "${PUBPATH}" ]] || ssh-keygen -y -f ${KEYPATH} > ${PUBPATH}
     [[ -L "${HOME}/.ssh/vertica-poc" ]] || ln -s ${KEYPATH} ${HOME}/.ssh/vertica-poc
-elif
+else
     # If not AWS, create a set of keys to use to access Vertica hosts
+    echo "foo"
     export KEYPATH="${HOME}/.ssh/${KEYNAME}"
+    echo "bar"
     [[ -d "${HOME}/.ssh" ]] || mkdir -m 700 ${HOME}/.ssh
     [[ -f "${KEYPATH}" ]] || ssh-keygen -f ${KEYPATH} -q -N ""
     chmod 600 $KEYPATH
@@ -239,11 +246,11 @@ ${PRIV_IP} ${HOSTNAME_C3} command mc ns1 www
 ${PUBL_IP} ${HOSTNAME_ORIG} vertica-jumpbox ${HOSTNAME_C3}-publ command-publ mc-publ
 
 # PoC hosts
-"$PRIMARY_HOST_ENTRIES"
-"$SECONDARY_HOST_ENTRIES"
+$PRIMARY_HOST_ENTRIES
+$SECONDARY_HOST_ENTRIES
 
 # Storage
-"$STORAGE_ENTRIES"
+$STORAGE_ENTRIES
 
 # Localhost
 127.0.0.1    localhost localhost4 
@@ -300,10 +307,10 @@ cat <<_EOF_ > ./hosts.ini
 command
 
 [primary_nodes]
-"$PNODES"
+$PNODES
 
 [secondary_nodes]
-"$SNODES"
+$SNODES
 
 [vertica_nodes:children]
 primary_nodes
@@ -324,14 +331,14 @@ sed -i 's|^#forks\s*=\s*5|forks = 32|g' /etc/ansible/ansible.cfg
 sed -i 's|^#executable\s*=\s*/bin/sh|executable = /bin/bash|g' /etc/ansible/ansible.cfg
 
 ### Set up or fix SSH keys for root access 
-NODES="$(grep vertica-node /etc/hosts | awk '{print $3}')"
+NODES="$(grep -E 'vertica-node|ns1' /etc/hosts | awk '{print $3}')"
 echo "====== Set up SSH authentication for PoC hosts ======"
 echo "(say 'yes' if prompted and enter password repeatedly)"
 for node in ${NODES}
 do 
     if [ ${IS_AWS_UUID^^} == "EC2" ]; then
 	ssh -i $KEYPATH ${DBUSER}@${node} sudo cp /home/${DBUSER}/.ssh/authorized_keys /root/.ssh/authorized_keys
-    elif
+    else
 	ssh-copy-id -i $KEYPATH root@${node}
     fi
 done
@@ -340,15 +347,18 @@ done
 ansible all -o -m ping
 
 ### Configure PoC hosts
-ansible vertica -o -m hostname -a "name={{ inventory_hostname_short }}"
-ansible vertica -o -m nmcli -a "type=ethernet conn_name=${PRIV_NDEV} gw4=${LAB_GW} dns4=${LAB_DNS_IP} dns4_search=${LAB_DOM} state=present"
-ansible vertica -o -m service -a "name=network state=restarted"
+ansible vertica_nodes -o -m hostname -a "name={{ inventory_hostname_short }}"
+# Add dnsmasq DNS to the private interface
+ansible vertica_nodes -o -m nmcli -a "type=ethernet conn_name=${PRIV_NDEV} gw4=${LAB_GW} dns4=${LAB_DNS_IP} dns4_search=${LAB_DOM} state=present"
+# Remove any DNS servers on the public interfaces
+ansible vertica_nodes -o -m nmcli -a "type=ethernet conn_name=${PUBL_NDEV} dns4='' dns4_search='' state=present"
+ansible vertica_nodes -o -m service -a "name=network state=restarted"
 
 ### Test that dnsmasq DNS is working from the PoC hosts
-ansible all -o -m package -a 'name=bind-utils state=latest'
-ansible all -o -m shell -a "sed -i 's|^hosts:\s*.*$|hosts:      dns files myhostname|g' /etc/nsswitch.conf"
-ansible vertica -o -m shell -a 'dig command google.com +short'
-ansible vertica -o -m shell -a "dig -x ${LAB_DNS_IP} +short"
+ansible vertica_nodes -o -m package -a 'name=bind-utils state=latest'
+ansible vertica_nodes -o -m shell -a "sed -i 's|^hosts:\s*.*$|hosts:      dns files myhostname|g' /etc/nsswitch.conf"
+ansible vertica_nodes -o -m shell -a 'dig command google.com +short'
+ansible vertica_nodes -o -m shell -a "dig -x ${LAB_DNS_IP} +short"
 
 ### Set up NTP and time on all hosts
 ansible all -o -m package -a 'name=ntp state=latest'
@@ -356,3 +366,5 @@ ansible all -o -m shell -a 'timedatectl set-ntp true'
 ansible all -o -m shell -a "timedatectl set-timezone ${POC_TZ}"
 ansible all -o -m shell -a 'timedatectl status'
 ansible all -o -m shell -a 'date'
+
+set +x 
