@@ -329,6 +329,8 @@ cat ./hosts.ini >> /etc/ansible/hosts
 ### Modify Ansible config for convenience
 sed -i 's|^#forks\s*=\s*5|forks = 32|g' /etc/ansible/ansible.cfg
 sed -i 's|^#executable\s*=\s*/bin/sh|executable = /bin/bash|g' /etc/ansible/ansible.cfg
+sed -i -e 's|^#callback_whitelist\s*=\s*.*$|callback_whitelist = timer, profile_tasks|g' /etc/ansible/ansible.cfg
+echo -e '[callback_profile_tasks]\ntask_output_limit = 500\nsort_order = none' >> /etc/ansible/ansible.cfg
 
 ### Set up or fix SSH keys for root access 
 NODES="$(grep -E 'vertica-node|ns1' /etc/hosts | awk '{print $3}')"
