@@ -29,12 +29,16 @@
 
 - name: Collect default set of info
   purefb_info:
+    gather_subset:
+      - all
     fb_url: "{{ fb_mgmt }}"
     api_token: "{{ fb_api_token }}"
   register: blade_info
 - name: Show default information
   debug:
-    msg: "{{ blade_info['purefb_info']['default'] }}"
+    msg: 
+      - "{{ blade_info['purefb_info']['default'] }}"
+      - "{{ blade_info['purefb_info']['buckets'] }}"
 
 - name: Create new Filesystem to use for PoC
   purefb_fs:
@@ -58,12 +62,12 @@
   purefb_s3user:
     name: "{{ fb_s3_user }}"
     account: "{{ fb_s3_acct }}"
+    access_key: yes
     state: present
     fb_url: "{{ fb_mgmt }}"
     api_token: "{{ fb_api_token }}"
   register: result
-- debug:
-    msg: "S3 User: {{ result['s3user_info'] }}"
+- debug: var=result
 
 - name: Clean up any old configuration files
   file:
@@ -78,6 +82,7 @@
     path: "{{ aws_config_path }}"
     backup: yes
     create: yes
+    mode: '0600'
     marker: "### {mark} FlashBlade S3 Credestials for Account = {{ fb_s3_acct }}/{{ fb_s3_user }}"
     block: |
       [default]
@@ -89,6 +94,7 @@
     path: "{{ auth_config_path }}"
     backup: yes
     create: yes
+    mode: '0600'
     marker: ''
     block: |
       awsenablehttps = 0
@@ -99,9 +105,10 @@
   purefb_bucket:
     name: "{{ fb_s3_bucket }}"
     account: "{{ fb_s3_acct }}"
-    versioning: absent
     state: present
+    versioning: absent
     fb_url: "{{ fb_mgmt }}"
     api_token: "{{ fb_api_token }}"
+  when: fb_s3_bucket not in blade_info['purefb_info']['buckets']
 
 ...

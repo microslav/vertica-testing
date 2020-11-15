@@ -1,4 +1,4 @@
-######################################################################
+#######################################################################
 #
 # Variables for the configuration steps common across all nodes
 #
@@ -12,17 +12,17 @@ hosts_group: "{{ lookup('env','POC_ANSIBLE_GROUP') }}"
 fb_data: "poc-fb-data"
 fb_mgmt: "poc-fb-mgmt"
 # Management token (!!! Should be in a vault !!!)
-fb_api_token: "{{ lookup('env','FB_API_TOKEN') }}"
+fb_api_token: "{{ lookup('env','PUREFB_API') }}"
 # Storage details for the Vertica deployment
 fb_fs_name: "vertica"
 fb_fs_size: "16T"
 fb_s3_acct: "vertica"
-fb_s3_user: "dbadmin"
+fb_s3_user: "{{ lookup('env','DBUSER') }}"
 fb_s3_bucket: "vertica"
 
 # Where to store the generated access info
-aws_config_path: "roles/files/aws_credentials"
-auth_config_path: "roles/files/auth_params.conf"
+aws_config_path: "/tmp/aws_credentials"
+auth_config_path: "/tmp/auth_params.conf"
 
 ### Timezone and Language to set on the hosts
 host_tz: "{{ lookup('env','POC_TZ') }}"
@@ -30,12 +30,13 @@ host_lang: "en_US.UTF-8"
 
 ### SSH Keys to use for the deployment
 ### Exported to environment from vertica_poc_prep.sh
-keyname: "{{ lookup('env','KEYNAME' }}"
-keypath: "{{ lookup('env','KEYPATH' }}"
-pubpath: "{{ lookup('env','PUBPATH' }}"
+keyname: "{{ lookup('env','KEYNAME') }}"
+keypath: "{{ lookup('env','KEYPATH') }}"
+pubpath: "{{ lookup('env','PUBPATH') }}"
+privnet: "{{ lookup('env','LAB_PRIV_NET') }}"
 
 ### Database User Info
-dbuser: "dbadmin"
+dbuser: "{{ lookup('env','DBUSER') }}"
 dbgroup: "verticadba"
 dbreal: "Vertica DBA"
 dbpwhash: "$6$9bcWrFWE$ast758GlvSP5O0AcxHA16olRWLf87gtboraARI3BBwe/Bb8sTEP6N5UipxOU4XtEdBCnMCRq2YcPDi31AfJ0U."
@@ -74,6 +75,7 @@ perf_packages:
   - time
   - sysstat
   - strace
+  - traceroute
   - atop
   - lsof
   - tuned
@@ -90,10 +92,9 @@ comfy_packages:
   - parallel
   - pigz
   - jq
-  - httpie
 
 # Golang information for installation
-go_ver:  "1.15.2"
+go_ver:  "1.15.5"
 go_os:   "linux"
 go_arch: "amd64"
 go_url:  "https://dl.google.com/go"
@@ -117,17 +118,17 @@ tuned_config_dir: "/etc/tuned/vertica-performance"
 vperf_runsteps: "{{ lookup('env','VA_RUN_VPERF') }} | bool" 
 vperf_dir: "vperf_reports"
 vbin_path: "/opt/vertica/bin"
-vnodes_ips: "{{ groups[lookup('vars','hosts_group')] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(',') }}"
+vnodes_ips: "{{ groups['vertica_nodes'] | map('extract', hostvars, ['ansible_facts',lookup('env','PRIV_NDEV'),'ipv4','address']) | join(',') }}"
 vperf_io_dur: "240"
 vperf_io_logdur: "{{ ((vperf_io_dur|int)/4)|int }}"
 vperf_io_locpath: "/home/{{ dbuser }}/"
 vperf_io_nfspath: "/mnt/{{ fb_fs_name }}/"
 
 # Vertica Cluster and Database info
-nod_list: "{{ groups[lookup('vars','hosts_group')] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join('\n') }}"
+nod_list: "{{ groups['vertica_nodes'] | map('extract', hostvars, ['ansible_facts',lookup('env','PRIV_NDEV'),'ipv4','address']) | join(',') }}"
 nod_names: "{{ groups[lookup('vars','hosts_group')] | map('extract', hostvars, ['inventory_hostname_short']) | join(',') }}"
 nod_count: "{{ groups[lookup('vars','hosts_group')] | length }}"
-nod_vms: "True" # True if nodes are VMs or instances, False otherwise
+nod_vms: "{{ lookup('env','VA_VIRTUAL_NODES') | bool }}" 
 vertica_cfg_name: "vertica_install.cfg"
 loc_cfg_path: "/tmp/{{ vertica_cfg_name }}"
 nod_cfg_path: "/root/{{ vertica_cfg_name }}"
@@ -139,7 +140,7 @@ vdb_s3_path: "s3://{{ fb_s3_bucket }}/prod/{{ vdb_name }}"
 vdb_shard_count: "{{ (nod_count|int) * (vdb_nod_shards|int) }}"
 vdb_auth_path: "/home/{{ dbuser }}/auth_params.conf"
 vdb_depot_path: "/home/{{ dbuser }}/depot"
-vdb_depot_size: "{{ lookup('env','VDB_DEPOT_SIZE' }}"
+vdb_depot_size: "{{ lookup('env','VDB_DEPOT_SIZE') }}"
 vdb_create_db_cmd: >-
   /opt/vertica/bin/admintools -t create_db
   --force-cleanup-on-failure

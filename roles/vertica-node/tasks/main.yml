@@ -17,6 +17,13 @@
 - debug:
     msg: "{{ out.stdout_lines }}"
 
+- name: Get the block device holding the {{ dbuser }} home directory
+  shell:
+    cmd: "df --output=source ~/ | tail -1"
+  become: yes
+  become_user: "{{ dbuser }}"
+  register: user_dev
+
 - name: Set Block IO scheduler noop (for SSD); assumes /dev/{{ block_dev }} device
   shell:
     cmd: |
@@ -31,14 +38,12 @@
 - name: Set the block device read-ahead settings to 8192
   shell:
     cmd: |
-      /sbin/blockdev --setra 8192 /dev/{{ block_dev }}
-      [[ $(grep -q "setra 8192 /dev/{{ block_dev }}" /etc/rc.local) ]] || ( echo "/sbin/blockdev --setra 8192 /dev/{{ block_dev }}" >> /etc/rc.local )
-      /sbin/blockdev --getra /dev/{{ block_dev }}
+      /sbin/blockdev --setra 8192 {{ user_dev.stdout_lines[0] }}
+      [[ $(grep -q "setra 8192 {{ user_dev.stdout_lines[0] }}" /etc/rc.local) ]] || ( echo "/sbin/blockdev --setra 8192 {{ user_dev.stdout_lines[0] }}" >> /etc/rc.local )
+      /sbin/blockdev --getra {{ user_dev.stdout_lines[0] }}
       grep setra /etc/rc.local
   register: out
-  ignore_errors: yes
-- debug:
-    msg: "{{ out.stdout_lines }}"
+- debug: var=out
 
 - name: Set Timezone and Language in /etc/profile
   shell:
@@ -102,6 +107,7 @@
   shell:
     cmd: |
       setenforce 0
+      echo 0 > /sys/fs/selinux/enforce
       getenforce
       sed -i "s/SELINUX=enforcing/SELINUX=disabled/g" /etc/selinux/config
       grep SELINUX= /etc/selinux/config | grep -v '^\#'
@@ -131,10 +137,26 @@
   shell:
     cmd: cat /sys/kernel/mm/transparent_hugepage/enabled
   register: out
-  failed_when: "'[always]' not in out.stdout_lines"
+  failed_when: "'[always]' not in out.stdout_lines[0]"
 - debug:
     msg: "{{ out.stdout_lines }}"
 
+# Install the Vertica RPM on all the Vertica nodes
+# Ensure that the Vertica RPM is copied into the files directory for the role
+- name: Copy the Vertica package to hosts
+  copy:
+    src: "{{ vertica_pkg }}"
+    dest: "/tmp/"
+    mode: "0644"
+  register: out
+- debug: var=out
+- name: Install the Vertica package
+  package:
+    name: "/tmp/{{ vertica_pkg }}"
+    state: present
+  become: yes
+  register: out
+- debug: var=out.results
 - name: Gather package facts
   package_facts:
 - name: Verify that the Vertica package is installed
@@ -186,54 +208,69 @@
     msg: "{{ out.stdout_lines }}"
 ### Revert to defaults by running "tuned-adm recommend" on hosts
 
-### Configure the hosts to be Vertica nodes
-- name: Delete any old temporary config files
-  file:
-    path: "{{ loc_cfg_path }}"
-    state: absent
-  delegate_to: localhost
-
-- name: Create the configuration file for the installation
-  blockinfile:
-    path: "{{ loc_cfg_path }}"
-    block: |
-      accept_eula = True
-      license_file = {{ nod_lic_path }}
-      direct_only = {{ nod_vms }}
-      failure_threshold = FAIL
-      hosts = {{ nod_names }}
-      ipv4 = False
-      ipv6 = False
-      record_to = /root/recorded_vertica_install.cfg
-      ssh_identity = /root/.ssh/{{ keypath }}
-      vertica_dba_user = {{ dbuser }}
-      vertica_dba_group = {{ dbgroup }}
-    create: yes
-  delegate_to: localhost
-
-- name: Copy the Vertica files to install host
-  copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    mode: "0600"
-  with_items:
-    - { src: "{{ loc_cfg_path }}", dest: "{{ nod_cfg_path }}" }
-    - { src: "{{ loc_lic_path }}", dest: "{{ nod_lic_path }}" }
-  run_once: yes
-  register: out
-- debug: var=out
-
-- name: Run the Vertica Install Script on the install host
-  shell:
-    cmd: "/opt/vertica/sbin/install_vertica --config-file {{ nod_cfg_path }}"
-  run_once: yes
-  register: out
-- debug: var=out
-
-- name: Clean up the temporary license file on the install host
-  file:
-    path: "{{ nod_lic_path }}"
-    state: absent
-  run_once: yes
+### Run Vertica performance validation tests
+- name: Run Vertica performance validation tests
+  block:
+    - name: Create or check local destination directory
+      file:
+        path: "{{ vperf_dir }}/"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: yes
+    - name: Gather CPU performance data
+      shell:
+        cmd: "/opt/vertica/bin/vcpuperf | tee /tmp/vcpuperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out 2>&1"
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+    - name: Fetch CPU performance results into local directory
+      fetch:
+        src: "/tmp/vcpuperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+    - name: Gather network IO performance
+      shell:
+        cmd: >-
+          /opt/vertica/bin/vnetperf --duration=5 --hosts={{ vnodes_ips }} --identity-file=~/.ssh/vertica-poc
+          --vertica-install={{ vbin_path }} --address-family=4 > /tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out
+          2>&\1
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      run_once: yes
+    - name: Fetch Network performance results into local directory
+      fetch:
+        src: "/tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+      run_once: yes
+    - name: Gather root drive IO performance
+      shell:
+        cmd: >-
+          /opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16
+          {{ vperf_io_locpath }} >/tmp/vioperf_{{ hosts_group }}_LOC_{{ inventory_hostname_short }}.out 2>&\1
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+    - name: Fetch performance results into local directory
+      fetch:
+        src: "/tmp/vioperf_{{ hosts_group }}_LOC_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+    - name: Gather FlashBlade NFS IO performance
+      shell:
+        cmd: >-
+          /opt/vertica/bin/vioperf --duration={{ vperf_io_dur }}s --log-interval={{ vperf_io_logdur }}s --thread-count=16
+          {{ vperf_io_nfspath }} >/tmp/vioperf_{{ hosts_group }}_NFS_{{ inventory_hostname_short }}.out 2>&\1
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+    - name: Fetch performance results into local directory
+      fetch:
+        src: "/tmp/vioperf_{{ hosts_group }}_NFS_{{ inventory_hostname_short }}.out"
+        dest: "{{ vperf_dir }}/"
+        flat: yes
+  when: vperf_runsteps
 
 ...

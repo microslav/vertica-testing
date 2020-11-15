@@ -21,8 +21,8 @@
   roles:
   - vertica-node
 
-- name: Special configuration and actions on Primary node
-  hosts: primary_nodes
+- name: Special configuration and actions on Primary nodes
+  hosts: vertica_nodes
   gather_facts: yes
   roles:
   - primary-node
@@ -32,5 +32,6 @@
   gather_facts: yes
   roles:
   - mc
+
 ...
 

@@ -31,18 +31,21 @@
     name: "{{ sys_packages }}"
     state: present
     skip_broken: yes
+  ignore_errors: yes
 
 - name: "Install Performance Packages"
   package:
     name: "{{ perf_packages }}"
     state: present
     skip_broken: yes
+  ignore_errors: yes
 
 - name: "Install Comfort Packages"
   package:
     name: "{{ comfy_packages }}"
     state: present
     skip_broken: yes
+  ignore_errors: yes
 
 ### Make sure we're operation in the right timezone
 - name: Set hosts timezone to {{ host_tz }}
@@ -135,13 +138,25 @@
     - { user: "{{ dbuser }}", group: "{{ dbgroup }}", src: "{{ pubpath }}", dest: "/home/{{ dbuser }}/.ssh/authorized_keys", mode: '0644' }
   become: yes
 
+- name: Create fixed symbolic links to the SSH keys
+  file:
+    path: "{{ item.dir }}/{{ item.link }}"
+    src: "{{ item.dir }}/{{ item.targ }}"
+    state: link
+  with_items:
+    - { targ: "{{ keypath|basename }}", dir: "/root/.ssh/", link: 'vertica-poc' }
+    - { targ: "{{ pubpath|basename }}", dir: "/root/.ssh/", link: 'vertica-poc.pub' }
+    - { targ: "{{ keypath|basename }}", dir: "/home/{{ dbuser }}/.ssh/", link: 'vertica-poc' }
+    - { targ: "{{ pubpath|basename }}", dir: "/home/{{ dbuser }}/.ssh/", link: 'vertica-poc.pub' }
+  become: yes
+
 - name: Generate .ssh/config file
   copy:
     content: |
-      Host outposts-*
+      Host vertica-* command mc {{ privnet }}.*
         HostName %h
         User {{ item.user }}
-        IdentityFile {{ item.home }}/.ssh/{{ keypath }}
+        IdentityFile ~/.ssh/vertica-poc
         StrictHostKeyChecking no
         UserKnownHostsFile=/dev/null
     dest: "{{ item.home }}/.ssh/config"
@@ -186,6 +201,14 @@
     group: "{{ dbgroup }}"
   become: yes
 
+- name: Delete the temporary local copies of the credentials for better security
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - "{{ aws_config_path }}"
+    - "{{ auth_config_path }}"
+
 ### Install and configure Golang on all the hosts (for s5cmd)
 - name: Check if Go is already installed
   stat:
@@ -204,6 +227,7 @@
     cmd: grep 'bin/go' /etc/profile.d/custom-path.sh
   ignore_errors: yes
   register: go_custom_path
+- debug: var=go_custom_path
 
 - name: Add the Go bin directory to system-wide PATH
   blockinfile:
@@ -213,7 +237,7 @@
     mode: '0644'
     create: yes
     backup: yes
-  when: go_custom_path.rc == 1
+  when: go_custom_path.rc > 0
 
 - name: Get expected Go workspace
   shell:

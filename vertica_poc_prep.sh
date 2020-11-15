@@ -28,7 +28,12 @@ export POC_DOM="fsa.lab"                        # External domain where PoC runs
 export POC_DNS="10.21.234.10"                   # External DNS IP where PoC runs
 export POC_TZ="America/Los_Angeles"             # Timezone where PoC runs
 
+### FlashBlade API Token (get via SSH to FlashBlade CLI; see Admin docs)
+export PUREFB_API="T-11111111-2222-3333-4444-555555555555"   # <== CHANGE ME
+
 ### PoC Platform Devices and Roles
+# True is the hosts are virtual machines or instances, False for physical hosts
+export VA_VIRTUAL_NODES="True"
 # If collapsing multiple networks (e.g., public and private, private and storage),
 # repeat the name of the device in multiple places:
 export PRIV_NDEV="ens192"      # Private (primary) network interface
@@ -111,7 +116,7 @@ export PRIV_PREFIX=$(echo $PRIV_CIDR | cut -d/ -f2)
 export IS_AWS_UUID="$(sudo dmidecode --string=system-uuid | cut -c1-3)"
 
 ### Initial packages to install before Ansible configured
-export INITPKG="ansible mosh tmux emacs-nox emacs-yaml-mode"
+export INITPKG="python-pip mosh tmux emacs-nox emacs-yaml-mode"
 export DNSPKG="dnsmasq bind-utils"
 
 ### For dnsmasq setup
@@ -134,6 +139,10 @@ yum install -y epel-release
 yum install -y dnf deltarpm
 dnf install -y $INITPKG
 
+### Use pip to install Ansible to get newer version than EPEL
+pip install --upgrade pip
+pip install --upgrade ansible
+
 ### Set up SSH keys for login and Ansible
 export PUBPATH="${HOME}/.ssh/${KEYNAME}.pub"
 if [ ${IS_AWS_UUID^^} == "EC2" ]; then
@@ -144,9 +153,7 @@ if [ ${IS_AWS_UUID^^} == "EC2" ]; then
     [[ -L "${HOME}/.ssh/vertica-poc" ]] || ln -s ${KEYPATH} ${HOME}/.ssh/vertica-poc
 else
     # If not AWS, create a set of keys to use to access Vertica hosts
-    echo "foo"
     export KEYPATH="${HOME}/.ssh/${KEYNAME}"
-    echo "bar"
     [[ -d "${HOME}/.ssh" ]] || mkdir -m 700 ${HOME}/.ssh
     [[ -f "${KEYPATH}" ]] || ssh-keygen -f ${KEYPATH} -q -N ""
     chmod 600 $KEYPATH
@@ -330,7 +337,13 @@ cat ./hosts.ini >> /etc/ansible/hosts
 sed -i 's|^#forks\s*=\s*5|forks = 32|g' /etc/ansible/ansible.cfg
 sed -i 's|^#executable\s*=\s*/bin/sh|executable = /bin/bash|g' /etc/ansible/ansible.cfg
 sed -i -e 's|^#callback_whitelist\s*=\s*.*$|callback_whitelist = timer, profile_tasks|g' /etc/ansible/ansible.cfg
-echo -e '[callback_profile_tasks]\ntask_output_limit = 500\nsort_order = none' >> /etc/ansible/ansible.cfg
+cat <<_EOF_ >> /etc/ansible/ansible.cfg
+
+### Enable task timing info
+[callback_profile_tasks]
+task_output_limit = 500
+sort_order = none
+_EOF_
 
 ### Set up or fix SSH keys for root access 
 NODES="$(grep -E 'vertica-node|ns1' /etc/hosts | awk '{print $3}')"
@@ -354,6 +367,9 @@ ansible vertica_nodes -o -m hostname -a "name={{ inventory_hostname_short }}"
 ansible vertica_nodes -o -m nmcli -a "type=ethernet conn_name=${PRIV_NDEV} gw4=${LAB_GW} dns4=${LAB_DNS_IP} dns4_search=${LAB_DOM} state=present"
 # Remove any DNS servers on the public interfaces
 ansible vertica_nodes -o -m nmcli -a "type=ethernet conn_name=${PUBL_NDEV} dns4='' dns4_search='' state=present"
+# Set the private interface to be on the trusted zone for the firewall
+ansible vertica_nodes -m firewalld -a "zone=trusted interface=${PRIV_NDEV} permanent=true state=enabled"
+# Restart the networking
 ansible vertica_nodes -o -m service -a "name=network state=restarted"
 
 ### Test that dnsmasq DNS is working from the PoC hosts
