@@ -116,7 +116,7 @@ export PRIV_PREFIX=$(echo $PRIV_CIDR | cut -d/ -f2)
 export IS_AWS_UUID="$(sudo dmidecode --string=system-uuid | cut -c1-3)"
 
 ### Initial packages to install before Ansible configured
-export INITPKG="python-pip mosh tmux emacs-nox emacs-yaml-mode"
+export INITPKG="python-pip ansible"
 export DNSPKG="dnsmasq bind-utils"
 
 ### For dnsmasq setup
@@ -141,6 +141,7 @@ dnf install -y $INITPKG
 
 ### Use pip to install Ansible to get newer version than EPEL
 pip install --upgrade pip
+pip uninstall -y ansible        # Need EPEL version first to set up system files
 pip install --upgrade ansible
 
 ### Set up SSH keys for login and Ansible
@@ -162,8 +163,9 @@ fi
 [[ -L "${HOME}/.ssh/vertica-poc.pub" ]] || ln -s ${PUBPATH} ${HOME}/.ssh/vertica-poc.pub
 
 ### Create SSH config using standardized "vertica-poc" link names
-cat <<_EOF_ >> ${HOME}/.ssh/config
-Host vertica-* ${POC_PREFIX}-*
+[[ -f "${HOME}/.ssh/config" ]] && mv ${HOME}/.ssh/config ${HOME}/.ssh/config_ORIG
+cat <<_EOF_ > ${HOME}/.ssh/config
+Host vertica-* ${POC_PREFIX}-* ${LAB_IP_SUFFIX}.*
    User root
    IdentityFile ${HOME}/.ssh/vertica-poc
    StrictHostKeyChecking no
