@@ -141,6 +141,7 @@ dnf install -y $INITPKG
 
 ### Use pip to install Ansible to get newer version than EPEL
 pip install --upgrade pip
+pip install --upgrade wheel
 pip uninstall -y ansible        # Need EPEL version first to set up system files
 pip install --upgrade ansible
 
@@ -165,7 +166,7 @@ fi
 ### Create SSH config using standardized "vertica-poc" link names
 [[ -f "${HOME}/.ssh/config" ]] && mv ${HOME}/.ssh/config ${HOME}/.ssh/config_ORIG
 cat <<_EOF_ > ${HOME}/.ssh/config
-Host vertica-* ${POC_PREFIX}-* ${LAB_IP_SUFFIX}.*
+Host vertica-* ${POC_PREFIX}-* ${LAB_PRIV_NET}.* command
    User root
    IdentityFile ${HOME}/.ssh/vertica-poc
    StrictHostKeyChecking no
@@ -173,13 +174,14 @@ Host vertica-* ${POC_PREFIX}-* ${LAB_IP_SUFFIX}.*
 
 _EOF_
 
-systemctl start firewalld
-systemctl enable firewalld
-firewall-cmd --state
-
 ######################################################################
 ### Set up NAT on Command Host and configured private interface as a gateway
 ######################################################################
+
+# We need firewalld for the NAT
+systemctl start firewalld
+systemctl enable firewalld
+firewall-cmd --state
 
 # Add gateway address to the private interface
 nmcli connection modify ${PRIV_CONN} +ipv4.addresses "${LAB_GW}/${PRIV_PREFIX}"
@@ -188,17 +190,12 @@ nmcli connection modify ${PRIV_CONN} +ipv4.addresses "${LAB_GW}/${PRIV_PREFIX}"
 [[ $(grep -Fq 'net.ipv4.ip_forward = 1' /etc/sysctl.d/ip_forward.conf) == 0 ]] || echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/ip_forward.conf
 sysctl -p /etc/sysctl.d/ip_forward.conf
 
-# We need firewalld for the NAT
-systemctl start firewalld
-systemctl enable firewalld
-firewall-cmd --state
-
 # Set up NAT and configure zones
 firewall-cmd --permanent --direct --passthrough ipv4 -t nat -I POSTROUTING -o ${PUBL_NDEV} -j MASQUERADE -s ${PRIV_CIDR}
 firewall-cmd --permanent --change-interface=${PUBL_NDEV} --zone=external 
 firewall-cmd --permanent --change-interface=${DATA_NDEV} --zone=external 
 firewall-cmd --permanent --change-interface=${PRIV_NDEV} --zone=trusted
-firewall-cmd --permanent --set-default-zone=trusted
+firewall-cmd --set-default-zone=trusted
 
 # Add allowed services and ports for the external zone
 firewall-cmd --permanent --zone=external --add-service=http
@@ -336,9 +333,9 @@ _EOF_
 cat ./hosts.ini >> /etc/ansible/hosts
 
 ### Modify Ansible config for convenience
-sed -i 's|^#forks\s*=\s*5|forks = 32|g' /etc/ansible/ansible.cfg
+sed -i 's|^#forks\s*=\s*5|forks = 32\ninterpreter_python = auto_legacy_silent|g' /etc/ansible/ansible.cfg
 sed -i 's|^#executable\s*=\s*/bin/sh|executable = /bin/bash|g' /etc/ansible/ansible.cfg
-sed -i -e 's|^#callback_whitelist\s*=\s*.*$|callback_whitelist = timer, profile_tasks|g' /etc/ansible/ansible.cfg
+sed -i 's|^#callback_whitelist\s*=\s*.*$|callback_whitelist = timer, profile_tasks|g' /etc/ansible/ansible.cfg
 cat <<_EOF_ >> /etc/ansible/ansible.cfg
 
 ### Enable task timing info
@@ -375,16 +372,21 @@ ansible vertica_nodes -m firewalld -a "zone=trusted interface=${PRIV_NDEV} perma
 ansible vertica_nodes -o -m service -a "name=network state=restarted"
 
 ### Test that dnsmasq DNS is working from the PoC hosts
-ansible vertica_nodes -o -m package -a 'name=bind-utils state=latest'
+ansible vertica_nodes -o -m package -a 'name=bind-utils state=present'
 ansible vertica_nodes -o -m shell -a "sed -i 's|^hosts:\s*.*$|hosts:      dns files myhostname|g' /etc/nsswitch.conf"
 ansible vertica_nodes -o -m shell -a 'dig command google.com +short'
 ansible vertica_nodes -o -m shell -a "dig -x ${LAB_DNS_IP} +short"
 
 ### Set up NTP and time on all hosts
-ansible all -o -m package -a 'name=ntp state=latest'
+ansible all -o -m package -a 'name=ntp state=present'
 ansible all -o -m shell -a 'timedatectl set-ntp true'
 ansible all -o -m shell -a "timedatectl set-timezone ${POC_TZ}"
-ansible all -o -m shell -a 'timedatectl status'
+ansible all -o -m service -a "name=ntpd state=stopped"
+ansible all -o -m shell -a 'ntpd -gq'
+ansible all -o -m service -a "name=ntpd state=started"
+sleep 10
+ansible all -o -m shell -a 'ntpstat'
+ansible all -o -m shell -a 'timedatectl status | grep "NTP synchronized:"'
 ansible all -o -m shell -a 'date'
 
 set +x 
