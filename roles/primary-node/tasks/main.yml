@@ -50,6 +50,7 @@
   run_once: yes
   register: out
 - debug: var=out
+  run_once: yes
 
 - name: Clean up the temporary license file on the install host
   file:
@@ -58,10 +59,6 @@
   run_once: yes
 
 ### Create and tune a new empty database
-- pause:
-    prompt: |
-      Will run the following command -- 
-      {{ vdb_create_db_cmd }}      
 - name: Run the Vertica create_db script
   shell:
     cmd: "{{ vdb_create_db_cmd }}"
@@ -71,6 +68,7 @@
   become_method: su
   register: out
 - debug: var=out
+  run_once: yes
 
 - name: Run FlashBlade-specific tuning for the database
   shell:
@@ -81,6 +79,7 @@
   become_method: su
   register: out
 - debug: var=out
+  run_once: yes 
 
 ### Set up and run the VMart demo on the Vertica Nodes
 - name: Set up and run the VMart demo on the Vertica Nodes
@@ -89,12 +88,14 @@
       shell:
         cmd: "vsql -ef vmart_define_schema.sql"
         chdir: "{{ vmart_code_dir }}"
-      run_once: true
+      run_once: yes
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
       register: out
     - debug: var=out
+      run_once: yes
+
     - name: Make sure output data destination directories exist
       file:
         path: "{{ vmart_dest_dir }}"
@@ -104,16 +105,19 @@
       become_method: su
       register: out
     - debug: var=out
+
     - name: Run the VMart data generator script
       shell:
         cmd: "{{ vmart_gen_cmd }}"
         chdir: "{{ vmart_code_dir }}"
-      run_once: true
+      run_once: yes
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
       register: out
     - debug: var=out
+      run_once: yes
+
     - name: Copy the parallel load SQL code to the Vertica nodes
       copy:
         src: "{{ vmart_pload_sql }}"
@@ -123,16 +127,19 @@
         mode: '0755'
       register: out
     - debug: var=out
-    - name: Load the generated data into the database
+
+    - name: Load the generated data into the database (parallel via ON ANY NODE)
       shell:
         cmd: "vsql -ef {{ vmart_pload_sql }}"
         chdir: "{{ vmart_dest_dir }}"
-      run_once: true
+      run_once: yes
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
       register: out
     - debug: var=out
+      run_once: yes
+
     - name: Query the database with some example queries all nodes
       shell:
         cmd: "vsql -if vmart_queries.sql | grep 'Time:'"
@@ -148,5 +155,6 @@
     prompt: |
       Check that the last step was successful.
       If everying looks good, hit Ctrl-C,C
+  when: check_exec
 
 ...

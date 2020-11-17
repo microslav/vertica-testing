@@ -7,6 +7,9 @@
 ### PoC and Environment Settings
 hosts_group: "{{ lookup('env','POC_ANSIBLE_GROUP') }}"
 
+### Pause execution at the end of each role
+check_exec: "{{ lookup('env','VA_PAUSE_CHECK') }} | bool" 
+
 ### FlashBlade configuration info
 # DNS name or IP address for FlashBlade data and mangement VIPs
 fb_data: "poc-fb-data"
@@ -41,9 +44,6 @@ dbgroup: "verticadba"
 dbreal: "Vertica DBA"
 dbpwhash: "$6$9bcWrFWE$ast758GlvSP5O0AcxHA16olRWLf87gtboraARI3BBwe/Bb8sTEP6N5UipxOU4XtEdBCnMCRq2YcPDi31AfJ0U."
 ### !!! Password hash should be in a vault; Default is "vertica1$" !!!
-
-### Outpost Infra Hardware Configs
-block_dev: "{{ lookup('env','BLOCK_DEV') }}"
 
 ### URL for the EPEL repository for the target distro
 extras_uri: "{{ lookup('env','EXTRAS_URI') }}"
@@ -100,7 +100,7 @@ go_arch: "amd64"
 go_url:  "https://dl.google.com/go"
 go_path: "/usr/local/go/bin"
 
-# s5cmd information for installation
+# s5cmd information for installation (s5cmd 1.2 doesn't seem to work for some reason)
 s5cmd_url: "https://github.com/peak/s5cmd/releases/download/v1.1.0/s5cmd_1.1.0_Linux-64bit.tar.gz"
 
 # RapidFile Toolkit RPM

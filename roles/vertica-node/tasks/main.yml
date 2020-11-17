@@ -19,29 +19,40 @@
 
 - name: Get the block device holding the {{ dbuser }} home directory
   shell:
-    cmd: "df --output=source ~/ | tail -1"
+    cmd: "df --output=source ~/ | tail -1 | xargs ls -l | awk -F/ '{print $NF}'"
   become: yes
   become_user: "{{ dbuser }}"
-  register: user_dev
-
-- name: Set Block IO scheduler noop (for SSD); assumes /dev/{{ block_dev }} device
+  register: out
+- set_fact:
+    user_dev: "{{ out.stdout_lines[0] }}"
+- debug:
+    msg: "It appears that {{ dbuser }} lives on the /dev/{{ user_dev }} block device" 
+- name: Set Block IO scheduler none (for SSD); assumes /dev/{{ user_dev }} device
   shell:
     cmd: |
-      echo noop > /sys/block/{{ block_dev }}/queue/scheduler
-      [[ $(grep -q "scheduler" /etc/rc.local) ]] || ( echo "echo noop > /sys/block/{{ block_dev }}/queue/scheduler" >> /etc/rc.local )
-      cat /sys/block/{{ block_dev }}/queue/scheduler
-      grep scheduler /etc/rc.local
+      echo none > /sys/block/{{ user_dev }}/queue/scheduler
+      [[ $(grep -q "scheduler" /etc/rc.d/rc.local) ]] && ( echo "echo none > /sys/block/{{ user_dev }}/queue/scheduler" >> /etc/rc.d/rc.local )
+      cat /sys/block/{{ user_dev }}/queue/scheduler
+      grep scheduler /etc/rc.d/rc.local
   register: out
 - debug:
     msg: "{{ out.stdout_lines }}"
 
-- name: Set the block device read-ahead settings to 8192
+- name: Set the block device for /home/{{ dbuser }} read-ahead settings to 8192 for Vertica
   shell:
     cmd: |
-      /sbin/blockdev --setra 8192 {{ user_dev.stdout_lines[0] }}
-      [[ $(grep -q "setra 8192 {{ user_dev.stdout_lines[0] }}" /etc/rc.local) ]] || ( echo "/sbin/blockdev --setra 8192 {{ user_dev.stdout_lines[0] }}" >> /etc/rc.local )
-      /sbin/blockdev --getra {{ user_dev.stdout_lines[0] }}
-      grep setra /etc/rc.local
+      /sbin/blockdev --setra 8192 /dev/{{ user_dev }}
+      [[ $(grep -q "setra 8192 /dev/{{ user_dev }}" /etc/rc.d/rc.local) ]] && ( echo "/sbin/blockdev --setra 8192 /dev/{{ user_dev }}" >> /etc/rc.d/rc.local )
+      /sbin/blockdev --getra /dev/{{ user_dev }}
+      grep setra /etc/rc.d/rc.local
+  register: out
+- debug: var=out
+
+- name: Make sure the /etc/rc.d/rc.local file is executable so the added commands run across reboots
+  file:
+    path: "/etc/rc.d/rc.local"
+    state: touch
+    mode: 'u+x'
   register: out
 - debug: var=out
 
@@ -115,6 +126,7 @@
   ignore_errors: no
 - debug:
     msg: "{{ out.stdout_lines }}"
+# Still need to reboot to completely get rid of SE Linux
 
 - name: Get perl version
   shell:
@@ -208,6 +220,15 @@
     msg: "{{ out.stdout_lines }}"
 ### Revert to defaults by running "tuned-adm recommend" on hosts
 
+### Reboot the Vertica nodes to clear SEL and make sure everything is stable
+- name: Reboot the Vertica nodes to clear SEL and make sure everything is stable
+  reboot:
+    pre_reboot_delay: 60
+    post_reboot_delay: 60
+    reboot_timeout: 600
+  register: out
+- debug: var=out
+
 ### Run Vertica performance validation tests
 - name: Run Vertica performance validation tests
   block:
@@ -229,6 +250,12 @@
         src: "/tmp/vcpuperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out"
         dest: "{{ vperf_dir }}/"
         flat: yes
+    - name: Allow vnetperf ports through the firewall in case no dedicated private interface
+      ansible.posix.firewalld:
+        port: "14159-14161/tcp"
+        permanent: no
+        state: enabled 
+        zone: public
     - name: Gather network IO performance
       shell:
         cmd: >-
@@ -239,6 +266,12 @@
       become_user: "{{ dbuser }}"
       become_method: su
       run_once: yes
+    - name: Block vnetperf ports again in Public zone
+      ansible.posix.firewalld:
+        port: "14159-14161/tcp"
+        permanent: no
+        state: disabled 
+        zone: public
     - name: Fetch Network performance results into local directory
       fetch:
         src: "/tmp/vnetperf_{{ hosts_group }}_{{ inventory_hostname_short }}.out"
@@ -277,5 +310,6 @@
     prompt: |
       Check that the last step was successful.
       If everying looks good, hit Ctrl-C,C
+  when: check_exec
 
 ...

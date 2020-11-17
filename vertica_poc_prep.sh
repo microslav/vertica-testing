@@ -1,5 +1,5 @@
 if [[ "$(basename -- "$0")" == "vertica_poc_prep.sh" ]]; then
-    echo "Don't run $0, source it" >&2
+    echo "Don't run $0, source it in a console window" >&2
     exit 1
 fi
 
@@ -39,9 +39,6 @@ export VA_VIRTUAL_NODES="True"
 export PRIV_NDEV="ens192"      # Private (primary) network interface
 export PUBL_NDEV="ens224"      # Public network interface for access and NAT
 export DATA_NDEV="ens224"      # Data network interface for storage access
-# Block device used for local storage on the Vertica nodes (e.g., nvme0n1, mapper, sda1)
-# The default for CentOS is "mapper" since dbadmin will live on /dev/mapper/centos-home
-export BLOCK_DEV="mapper"
 # URL for the extras repository matching host OS distributions
 export EXTRAS_URI="https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm"
 # Depot size per node. This should be about 2x host memory, but not more than
@@ -50,8 +47,9 @@ export VDB_DEPOT_SIZE="32G"
 
 ### Internal gateway IP address suffix on private network. It's assigned to
 ### the Command host as a NAT gateway to the outside for other PoC hosts.
-### If using a single network without control of IPs (e.g., AWS), use the 
-### IP suffix of the Command host itself.
+### If there is no separate private network, use the gateway suffix for the
+### public network. 
+### (!!! Assumes a /24 network; might need to fix for others !!!).
 export LAB_IP_SUFFIX="1"
 
 ### Set IP addresses for the Vertica nodes and FlashBlade
@@ -70,10 +68,11 @@ read -r -d '' STORAGE_ENTRIES <<-_EOF_
 10.21.200.4 ${POC_PREFIX}-fb-data poc-fb-data
 _EOF_
 
-### Configure whether to run the Vertica performance baselines and VMart demo
+### Configure how and what to run in the playbook
 export VA_RUN_VPERF="true"
 export VA_RUN_VMART="true"
-
+export VA_PAUSE_CHECK="true
+"
 ######################################################################
 ### CODE BELOW SHOULD NOT NEED TO BE MODIFIED
 ######################################################################
@@ -175,7 +174,8 @@ Host vertica-* ${POC_PREFIX}-* ${LAB_PRIV_NET}.* command
 _EOF_
 
 ######################################################################
-### Set up NAT on Command Host and configured private interface as a gateway
+### If using a separate private interface, set up NAT on the Command 
+### host and configure the private interface as a gateway.
 ######################################################################
 
 # We need firewalld for the NAT
@@ -183,21 +183,23 @@ systemctl start firewalld
 systemctl enable firewalld
 firewall-cmd --state
 
-# Add gateway address to the private interface
-nmcli connection modify ${PRIV_CONN} +ipv4.addresses "${LAB_GW}/${PRIV_PREFIX}"
-
-# Set up IP forwarding in the kernel for NAT
-[[ $(grep -Fq 'net.ipv4.ip_forward = 1' /etc/sysctl.d/ip_forward.conf) == 0 ]] || echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/ip_forward.conf
-sysctl -p /etc/sysctl.d/ip_forward.conf
-
-# Set up NAT and configure zones
-firewall-cmd --permanent --direct --passthrough ipv4 -t nat -I POSTROUTING -o ${PUBL_NDEV} -j MASQUERADE -s ${PRIV_CIDR}
-firewall-cmd --permanent --change-interface=${PUBL_NDEV} --zone=external 
-firewall-cmd --permanent --change-interface=${DATA_NDEV} --zone=external 
-firewall-cmd --permanent --change-interface=${PRIV_NDEV} --zone=trusted
-firewall-cmd --set-default-zone=trusted
+# Only set up NAT if separate private interfaces
+if [ "${PRIV_CONN}" != "${PUBL_NDEV}" ]; then
+    # Add gateway address to the private interface
+    nmcli connection modify ${PRIV_CONN} +ipv4.addresses "${LAB_GW}/${PRIV_PREFIX}"
+    # Set up IP forwarding in the kernel for NAT (if not already set up)
+    if [ $(grep -Fq 'net.ipv4.ip_forward = 1' /etc/sysctl.d/ip_forward.conf) != 0 ]]; then
+	echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/ip_forward.conf
+	sysctl -p /etc/sysctl.d/ip_forward.conf
+    fi
+    # Set up NAT and configure zones
+    firewall-cmd --permanent --direct --passthrough ipv4 -t nat -I POSTROUTING -o ${PUBL_NDEV} -j MASQUERADE -s ${PRIV_CIDR}
+    firewall-cmd --permanent --change-interface=${PRIV_NDEV} --zone=trusted
+fi
 
 # Add allowed services and ports for the external zone
+firewall-cmd --permanent --change-interface=${PUBL_NDEV} --zone=external 
+firewall-cmd --permanent --change-interface=${DATA_NDEV} --zone=external 
 firewall-cmd --permanent --zone=external --add-service=http
 firewall-cmd --permanent --zone=external --add-service=https
 firewall-cmd --permanent --zone=external --add-service=dns
@@ -287,17 +289,19 @@ systemctl daemon-reload
 systemctl restart dnsmasq 
 systemctl status dnsmasq
 
-### Use server to resolve names
-nmcli connection modify ${PRIV_CONN} ipv4.ignore-auto-dns yes
-nmcli connection modify ${PRIV_CONN} ipv4.dns ${LAB_DNS_IP}
-nmcli connection modify ${PRIV_CONN} ipv4.dns-search ${LAB_DOM}
-nmcli connection down ${PRIV_CONN}
-nmcli connection up ${PRIV_CONN}
+### Use this (Command) server to resolve names
+if [ "${PRIV_CONN}" != "${PUBL_NDEV}" ]; then
+    nmcli connection modify ${PRIV_CONN} ipv4.ignore-auto-dns yes
+    nmcli connection modify ${PRIV_CONN} ipv4.dns ${LAB_DNS_IP}
+    nmcli connection modify ${PRIV_CONN} ipv4.dns-search ${LAB_DOM}
+    nohup bash -c "nmcli connection down ${PRIV_CONN} && nmcli connection up ${PRIV_CONN}"
+    sleep 1
+fi 
 nmcli connection modify ${PUBL_CONN} ipv4.ignore-auto-dns yes
 nmcli connection modify ${PUBL_CONN} ipv4.dns ${LAB_DNS_IP}
 nmcli connection modify ${PUBL_CONN} ipv4.dns-search ${LAB_DOM}
-nmcli connection down ${PUBL_CONN}
-nmcli connection up ${PUBL_CONN}
+nohup bash -c "nmcli connection down ${PUBL_CONN} && nmcli connection up ${PUBL_CONN}"
+sleep 1
 
 ### Change hostname to match /etc/hosts
 [[ "$(hostname)" == "${HOSTNAME_C3}" ]] || hostnamectl set-hostname ${HOSTNAME_C3}
@@ -361,32 +365,40 @@ done
 ansible all -o -m ping
 
 ### Configure PoC hosts
+# Rename the hosts to match /etc/hosts and Ansible inventory
 ansible vertica_nodes -o -m hostname -a "name={{ inventory_hostname_short }}"
-# Add dnsmasq DNS to the private interface
-ansible vertica_nodes -o -m nmcli -a "type=ethernet conn_name=${PRIV_NDEV} gw4=${LAB_GW} dns4=${LAB_DNS_IP} dns4_search=${LAB_DOM} state=present"
-# Remove any DNS servers on the public interfaces
+# Remove any DNS servers on the public interfaces and use only the private interface
 ansible vertica_nodes -o -m nmcli -a "type=ethernet conn_name=${PUBL_NDEV} dns4='' dns4_search='' state=present"
-# Set the private interface to be on the trusted zone for the firewall
-ansible vertica_nodes -m firewalld -a "zone=trusted interface=${PRIV_NDEV} permanent=true state=enabled"
-# Restart the networking
-ansible vertica_nodes -o -m service -a "name=network state=restarted"
+# Add dnsmasq DNS to the private interface (and public interface if they're the same)
+ansible vertica_nodes -o -m nmcli \
+    -a "type=ethernet conn_name=${PRIV_NDEV} gw4=${LAB_GW} dns4=${LAB_DNS_IP} dns4_search=${LAB_DOM} state=present"
+# Set the private interface to be on the trusted zone for the firewall (if it is a separate device)
+if [ "${PRIV_NDEV}" != "${PUBL_NDEV}" ]; then
+    ansible vertica_nodes -m ansible.posix.firewalld \
+	-a "interface=${PRIV_NDEV} zone=trusted permanent=true state=enabled immediate=yes"
+    ansible vertica_nodes -m shell \
+	-a "nmcli connection modify ${PRIV_NDEV} connection.zone trusted"
+fi
+# Restart the networking and firewall
+ansible vertica_nodes -m service -a "name=network state=restarted"
+ansible vertica_nodes -m service -a "name=firewalld state=restarted"
 
 ### Test that dnsmasq DNS is working from the PoC hosts
-ansible vertica_nodes -o -m package -a 'name=bind-utils state=present'
+ansible vertica_nodes -m package -a 'name=bind-utils state=present'
 ansible vertica_nodes -o -m shell -a "sed -i 's|^hosts:\s*.*$|hosts:      dns files myhostname|g' /etc/nsswitch.conf"
 ansible vertica_nodes -o -m shell -a 'dig command google.com +short'
 ansible vertica_nodes -o -m shell -a "dig -x ${LAB_DNS_IP} +short"
 
-### Set up NTP and time on all hosts
-ansible all -o -m package -a 'name=ntp state=present'
+### Set up NTP and synchronize time on all hosts
+ansible all -m package -a 'name=ntp state=present'
 ansible all -o -m shell -a 'timedatectl set-ntp true'
 ansible all -o -m shell -a "timedatectl set-timezone ${POC_TZ}"
-ansible all -o -m service -a "name=ntpd state=stopped"
+ansible all -m service -a "name=ntpd state=stopped"
 ansible all -o -m shell -a 'ntpd -gq'
-ansible all -o -m service -a "name=ntpd state=started"
+ansible all -m service -a "name=ntpd state=started"
 sleep 10
-ansible all -o -m shell -a 'ntpstat'
-ansible all -o -m shell -a 'timedatectl status | grep "NTP synchronized:"'
-ansible all -o -m shell -a 'date'
+ansible all -m shell -a 'ntpstat'
+ansible all -m shell -a 'timedatectl status | grep "NTP synchronized:"'
+ansible all -m shell -a 'date'
 
 set +x 
