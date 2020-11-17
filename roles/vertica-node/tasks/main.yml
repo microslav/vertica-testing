@@ -273,4 +273,9 @@
         flat: yes
   when: vperf_runsteps
 
+- pause: 
+    prompt: |
+      Check that the last step was successful.
+      If everying looks good, hit Ctrl-C,C
+
 ...

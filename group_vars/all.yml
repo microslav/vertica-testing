@@ -125,6 +125,8 @@ vperf_io_locpath: "/home/{{ dbuser }}/"
 vperf_io_nfspath: "/mnt/{{ fb_fs_name }}/"
 
 # Vertica Cluster and Database info
+vdb_name: "verticadb"
+vdb_shards_per_node: "2"
 nod_list: "{{ groups['vertica_nodes'] | map('extract', hostvars, ['ansible_facts',lookup('env','PRIV_NDEV'),'ipv4','address']) | join(',') }}"
 nod_names: "{{ groups[lookup('vars','hosts_group')] | map('extract', hostvars, ['inventory_hostname_short']) | join(',') }}"
 nod_count: "{{ groups[lookup('vars','hosts_group')] | length }}"
@@ -134,13 +136,12 @@ loc_cfg_path: "/tmp/{{ vertica_cfg_name }}"
 nod_cfg_path: "/root/{{ vertica_cfg_name }}"
 loc_lic_path: "license.key"
 nod_lic_path: "/tmp/license.key"
-vdb_nod_shards: "2"
-vdb_name: "verticadb"
 vdb_s3_path: "s3://{{ fb_s3_bucket }}/prod/{{ vdb_name }}"
-vdb_shard_count: "{{ (nod_count|int) * (vdb_nod_shards|int) }}"
 vdb_auth_path: "/home/{{ dbuser }}/auth_params.conf"
 vdb_depot_path: "/home/{{ dbuser }}/depot"
 vdb_depot_size: "{{ lookup('env','VDB_DEPOT_SIZE') }}"
+init_nodes: "{{ groups['primary_nodes'] | map('extract', hostvars, ['inventory_hostname_short']) | join(',') }}"
+vdb_shard_count: "{{ (groups['primary_nodes']|length) * (vdb_shards_per_node|int) }}"
 vdb_create_db_cmd: >-
   /opt/vertica/bin/admintools -t create_db
   --force-cleanup-on-failure
@@ -149,7 +150,7 @@ vdb_create_db_cmd: >-
   --depot-path={{ vdb_depot_path }} --depot-size={{ vdb_depot_size }}
   --database={{ vdb_name }}
   --shard-count={{ vdb_shard_count }}
-  --hosts={{ nod_names }}
+  --hosts={{ init_nodes }}
 vdb_tune_db_cmd: |
   vsql -ec "select set_config_parameter('AWSStreamingConnectionPercentage', 0);"
   vsql -ec "select set_config_parameter('UseDepotForReads',1);"

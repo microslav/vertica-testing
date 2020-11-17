@@ -359,4 +359,8 @@
 - debug:
     msg: "{{ results.stdout_lines }}"
 
+- pause: 
+    prompt: |
+      Check that the last step was successful.
+      If everying looks good, hit Ctrl-C,C
 ...

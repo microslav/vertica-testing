@@ -92,3 +92,10 @@
 ### similar to this one to set up the tunnels:
 ###   ssh -f -L 5451:localhost:5451 My_Jumpbox ssh -f -L 5451:localhost:5450 -N My_MC_Node
 
+- pause: 
+    prompt: |
+      Check that the last step was successful.
+      If everying looks good, hit Ctrl-C,C
+
+...
+

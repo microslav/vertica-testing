@@ -20,12 +20,12 @@
 - name: Upgrade pip (via pip) to latest
   pip:
     name: pip
-    state: latest
+    state: present
 
 - name: Install or upgrade required purity-fb Python module
   pip:
     name: purity-fb
-    state: latest
+    state: present
 
 - name: Collect default set of info
   purefb_info:
@@ -110,5 +110,10 @@
     fb_url: "{{ fb_mgmt }}"
     api_token: "{{ fb_api_token }}"
   when: fb_s3_bucket not in blade_info['purefb_info']['buckets']
+
+- pause: 
+    prompt: |
+      Check that the last step was successful.
+      If everying looks good, hit Ctrl-C,C
 
 ...

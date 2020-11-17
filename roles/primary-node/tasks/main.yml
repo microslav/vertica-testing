@@ -23,7 +23,7 @@
       direct_only = {{ nod_vms }}
       failure_threshold = FAIL
       hosts = {{ groups['vertica_nodes'] | map('extract', hostvars, ['inventory_hostname_short']) | join(',') }}
-      ipv4 = False
+      ipv4 = True
       ipv6 = False
       record_to = /root/recorded_vertica_install.cfg
       ssh_identity = /root/.ssh/{{ keypath|basename }}
@@ -46,7 +46,7 @@
 
 - name: Run the Vertica Install Script on the install host
   shell:
-    cmd: "/opt/vertica/sbin/install_vertica --config-file {{ nod_cfg_path }}"
+    cmd: "/opt/vertica/sbin/install_vertica --config-file {{ nod_cfg_path }} --clean"
   run_once: yes
   register: out
 - debug: var=out
@@ -58,23 +58,27 @@
   run_once: yes
 
 ### Create and tune a new empty database
+- pause:
+    prompt: |
+      Will run the following command -- 
+      {{ vdb_create_db_cmd }}      
 - name: Run the Vertica create_db script
   shell:
     cmd: "{{ vdb_create_db_cmd }}"
+  run_once: yes
   become: yes
   become_user: "{{ dbuser }}"
   become_method: su
-  run_once: yes
   register: out
 - debug: var=out
 
 - name: Run FlashBlade-specific tuning for the database
   shell:
     cmd: "{{ vdb_tune_db_cmd }}"
+  run_once: yes
   become: yes
   become_user: "{{ dbuser }}"
   become_method: su
-  run_once: yes
   register: out
 - debug: var=out
 
@@ -85,10 +89,10 @@
       shell:
         cmd: "vsql -ef vmart_define_schema.sql"
         chdir: "{{ vmart_code_dir }}"
+      run_once: true
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
-      run_once: true
       register: out
     - debug: var=out
     - name: Make sure output data destination directories exist
@@ -104,10 +108,10 @@
       shell:
         cmd: "{{ vmart_gen_cmd }}"
         chdir: "{{ vmart_code_dir }}"
+      run_once: true
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
-      run_once: true
       register: out
     - debug: var=out
     - name: Copy the parallel load SQL code to the Vertica nodes
@@ -123,10 +127,10 @@
       shell:
         cmd: "vsql -ef {{ vmart_pload_sql }}"
         chdir: "{{ vmart_dest_dir }}"
+      run_once: true
       become: yes
       become_user: "{{ dbuser }}"
       become_method: su
-      run_once: true
       register: out
     - debug: var=out
     - name: Query the database with some example queries all nodes
@@ -139,5 +143,10 @@
       register: out
     - debug: var=out
   when: vmart_runsteps
+
+- pause: 
+    prompt: |
+      Check that the last step was successful.
+      If everying looks good, hit Ctrl-C,C
 
 ...
