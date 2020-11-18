@@ -31,7 +31,7 @@
   shell:
     cmd: |
       echo none > /sys/block/{{ user_dev }}/queue/scheduler
-      [[ $(grep -q "scheduler" /etc/rc.d/rc.local) ]] && ( echo "echo none > /sys/block/{{ user_dev }}/queue/scheduler" >> /etc/rc.d/rc.local )
+      echo "echo none > /sys/block/{{ user_dev }}/queue/scheduler" >> /etc/rc.d/rc.local
       cat /sys/block/{{ user_dev }}/queue/scheduler
       grep scheduler /etc/rc.d/rc.local
   register: out
@@ -42,7 +42,7 @@
   shell:
     cmd: |
       /sbin/blockdev --setra 8192 /dev/{{ user_dev }}
-      [[ $(grep -q "setra 8192 /dev/{{ user_dev }}" /etc/rc.d/rc.local) ]] && ( echo "/sbin/blockdev --setra 8192 /dev/{{ user_dev }}" >> /etc/rc.d/rc.local )
+      echo "/sbin/blockdev --setra 8192 /dev/{{ user_dev }}" >> /etc/rc.d/rc.local
       /sbin/blockdev --getra /dev/{{ user_dev }}
       grep setra /etc/rc.d/rc.local
   register: out
@@ -305,6 +305,19 @@
         dest: "{{ vperf_dir }}/"
         flat: yes
   when: vperf_runsteps
+
+- name: Make sure VMart output data destination directories exist on all Vertica hosts
+  block:
+    - name: 
+      file:
+        path: "{{ vmart_dest_dir }}"
+        state: directory
+      become: yes
+      become_user: "{{ dbuser }}"
+      become_method: su
+      register: out
+    - debug: var=out
+  when: vmart_runsteps
 
 - pause: 
     prompt: |

@@ -21,8 +21,8 @@
   roles:
   - vertica-node
 
-- name: Special configuration and actions on Primary nodes
-  hosts: vertica_nodes
+- name: Configure and activate database on Primary nodes
+  hosts: primary_nodes
   gather_facts: yes
   roles:
   - primary-node

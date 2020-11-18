@@ -77,7 +77,10 @@
   service_facts:
 - name: Check vertica-consoled status
   debug:
-    msg: "{{ ansible_facts.services['vertica-consoled.service'] }}"
+    msg: 
+      - "Status for the vertica-consoled service --"
+      - "{{ ansible_facts.services['vertica-consoled.service'] }}"
+      - "If all looks good, point your browser at https://{{ ansible_default_ipv4.address }}:5450/"
 
 ### This seems to frequently fail. Often there's a stuck Java process for MC. The remediation is to:
 ###   1. Stop the MC service: systemctl stop vertica-consoled

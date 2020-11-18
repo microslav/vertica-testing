@@ -96,16 +96,6 @@
     - debug: var=out
       run_once: yes
 
-    - name: Make sure output data destination directories exist
-      file:
-        path: "{{ vmart_dest_dir }}"
-        state: directory
-      become: yes
-      become_user: "{{ dbuser }}"
-      become_method: su
-      register: out
-    - debug: var=out
-
     - name: Run the VMart data generator script
       shell:
         cmd: "{{ vmart_gen_cmd }}"
@@ -118,13 +108,14 @@
     - debug: var=out
       run_once: yes
 
-    - name: Copy the parallel load SQL code to the Vertica nodes
+    - name: Copy the parallel load SQL code to the Vertica node
       copy:
         src: "{{ vmart_pload_sql }}"
         dest: "{{ vmart_dest_dir }}"
         owner: "{{ dbuser }}"
         group: "{{ dbgroup }}"
         mode: '0755'
+      run_once: yes
       register: out
     - debug: var=out
 
@@ -140,7 +131,7 @@
     - debug: var=out
       run_once: yes
 
-    - name: Query the database with some example queries all nodes
+    - name: Query the database with some example queries on all nodes
       shell:
         cmd: "vsql -if vmart_queries.sql | grep 'Time:'"
         chdir: "{{ vmart_code_dir }}"
