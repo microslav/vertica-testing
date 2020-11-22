@@ -197,19 +197,19 @@ if [ "${PRIV_CONN}" != "${PUBL_NDEV}" ]; then
     firewall-cmd --permanent --change-interface=${PRIV_NDEV} --zone=trusted
 fi
 
-# Add allowed services and ports for the external zone
-firewall-cmd --permanent --change-interface=${PUBL_NDEV} --zone=external 
-firewall-cmd --permanent --change-interface=${DATA_NDEV} --zone=external 
-firewall-cmd --permanent --zone=external --add-service=http
-firewall-cmd --permanent --zone=external --add-service=https
-firewall-cmd --permanent --zone=external --add-service=dns
-firewall-cmd --permanent --zone=external --add-service=dhcp
-firewall-cmd --permanent --zone=external --add-service=dhcpv6-client
-firewall-cmd --permanent --zone=external --add-service=mosh
-firewall-cmd --permanent --zone=external --add-service=ssh
-firewall-cmd --permanent --zone=external --add-service=ntp
-firewall-cmd --permanent --zone=external --add-service=vnc-server
-firewall-cmd --permanent --zone=external --add-port=5450/tcp
+# Add allowed services and ports for the public zone
+firewall-cmd --permanent --change-interface=${PUBL_NDEV} --zone=public 
+firewall-cmd --permanent --change-interface=${DATA_NDEV} --zone=public 
+firewall-cmd --permanent --zone=public --add-service=http
+firewall-cmd --permanent --zone=public --add-service=https
+firewall-cmd --permanent --zone=public --add-service=dns
+firewall-cmd --permanent --zone=public --add-service=dhcp
+firewall-cmd --permanent --zone=public --add-service=dhcpv6-client
+firewall-cmd --permanent --zone=public --add-service=mosh
+firewall-cmd --permanent --zone=public --add-service=ssh
+firewall-cmd --permanent --zone=public --add-service=ntp
+firewall-cmd --permanent --zone=public --add-service=vnc-server
+firewall-cmd --permanent --zone=public --add-port=5450/tcp
 
 # Reload and restart everything
 firewall-cmd --complete-reload

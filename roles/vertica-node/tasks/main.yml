@@ -138,12 +138,30 @@
 
 - name: Check socket states for required ports not being used
   shell:
-    cmd: ss -atupn | grep -E ':5433|:5434|:5444|:5450|:4803|:4804|:6543'
+    cmd: ss -atupn | grep -E ':5433|:5434|:5444|:5450|:4803|:4804|:6543|:14159|:14160|:14161|:50000'
   register: out
   ignore_errors: yes
   failed_when: out.rc != 1
 - debug:
     msg: "{{ out.stderr_lines }}"
+
+- name: Add Vertica ports to the firewall
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  with_items:
+    - "4803/tcp"          # Spread client port
+    - "5433-5434/tcp"     # Vertica client port
+    - "5444/tcp"          # MC and node agent comms
+    - "5450/tcp"          # MC port in case we install MC on a node
+    - "14159-14161/tcp"   # Ports used by vnetperf for bandwidth tests
+    - "50000/tcp"         # Port used by rsync for VBR
+    - "4803-4804/udp"     # Spread daemon port
+    - "5433/udp"          # Intra- and inter-cluster comms
+    - "6543/udp"          # Spread monitor port
+    - "14159-14161/udp"   # Ports used by vnetperf for bandwidth tests
 
 - name: Check that Huge Pages set to Always
   shell:

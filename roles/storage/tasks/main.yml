@@ -15,17 +15,17 @@
 - name: Install or update the python-pip package
   package:
     name: python-pip
-    state: present
+    state: latest
 
 - name: Upgrade pip (via pip) to latest
   pip:
     name: pip
-    state: present
+    state: latest
 
 - name: Install or upgrade required purity-fb Python module
   pip:
     name: purity-fb
-    state: present
+    state: latest
 
 - name: Collect default set of info
   purefb_info:
